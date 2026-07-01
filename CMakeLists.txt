@@ -61,6 +61,30 @@ endif()
 # set_target_properties(glm PROPERTIES FOLDER "Dependencies")
 
 # ImGui
-find_package(imgui REQUIRED)
+FetchContent_Declare(
+    imgui
+    DOWNLOAD_EXTRACT_TIMESTAMP OFF
+    URL https://github.com/ocornut/imgui/archive/refs/tags/v1.91.7.zip
+)
+FetchContent_GetProperties(imgui)
+if(NOT imgui_POPULATED)
+    set(FETCHCONTENT_QUIET NO)
+    FetchContent_Populate(imgui)
+endif()
+set(IMGUI_SOURCE_DIR "${imgui_SOURCE_DIR}")
+set(IMGUI_BACKENDS_SOURCE_DIR "${imgui_SOURCE_DIR}/backends")
+
+# ImGuiFileDialog
+FetchContent_Declare(
+    ImGuiFileDialog
+    DOWNLOAD_EXTRACT_TIMESTAMP OFF
+    URL https://github.com/aiekick/ImGuiFileDialog/archive/refs/tags/v0.6.8.zip
+)
+FetchContent_GetProperties(ImGuiFileDialog)
+if(NOT ImGuiFileDialog_POPULATED)
+    set(FETCHCONTENT_QUIET NO)
+    FetchContent_Populate(ImGuiFileDialog)
+endif()
+set(IMGUIFILEDIALOG_SOURCE_DIR "${imguifiledialog_SOURCE_DIR}")
 
 add_subdirectory(src)

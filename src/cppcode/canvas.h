@@ -1,15 +1,11 @@
+#pragma once
+
 #include "imgui.h"
 #include <cstddef>
-// #include <glm/trigonometric.hpp>
 #include <vector>
 #define GL_SILENCE_DEPRECATION
 #define GLFW_INCLUDE_NONE
-#include <GLFW/glfw3.h> // Will drag system OpenGL headers
-//
-// #include "glad/gl.h"
-
-// #include "shader.h"
-// static std::vector<ImVec2> points;
+#include <GLFW/glfw3.h>
 
 struct point {
   float x;
@@ -21,14 +17,15 @@ struct keyframe {
   float max_y;
   long double perimeter;
   std::vector<point> points;
+  float z = 0.0f;
 };
 
-// extern Shader *shdr;
 extern std::vector<keyframe> keyframes;
-// keyframe 0 is always currentkeyframe
 
-void initOpengl();
+void buildMesh();
+void markMeshDirty();
 void RenderCanvas();
 void resample(size_t kf_index, size_t n);
 void RenderCanvasLerp(float t);
-void Render3D(double yaw, double pitch, double roll);
+void Render3D(float yaw, float pitch, float zoom);
+void ExportOBJ(const char *filename);

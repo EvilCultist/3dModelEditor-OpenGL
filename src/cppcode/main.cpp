@@ -9,12 +9,14 @@
 #include <stdio.h>
 #define IMGUI_IMPL_OPENGL_ES3
 #define IM_VEC2_CLASS_EXTRA
+#include "ImGuiFileDialog.h"
 #include "canvas.h"
+#include "glad/gl.h"
 #include "imgui_impl_glfw.h"
 #include "imgui_impl_opengl3.h"
 #define GL_SILENCE_DEPRECATION
 #include <GL/gl.h>
-#include <GLFW/glfw3.h> // Will drag system OpenGL headers
+#include <GLFW/glfw3.h>
 
 std::ostream &operator<<(std::ostream &out, ImVec2 point) {
   out << point.x << ", " << point.y;
@@ -29,7 +31,6 @@ struct Line {
   ImVec2 p1, p2;
 };
 
-// Main code
 int main(int, char **) {
   glfwSetErrorCallback(glfw_error_callback);
   if (!glfwInit())
@@ -40,44 +41,42 @@ int main(int, char **) {
   glfwWindowHint(GLFW_CONTEXT_VERSION_MINOR, 0);
   glfwWindowHint(GLFW_CLIENT_API, GLFW_OPENGL_ES_API);
 
-  // Create window with graphics context
   GLFWwindow *window = glfwCreateWindow(
-      1280, 720, "Dear ImGui GLFW+OpenGL3 example", nullptr, nullptr);
+      1280, 720, "teddy-impl — Experimental 3D Modeling", nullptr, nullptr);
   if (window == nullptr)
     return 1;
   glfwMakeContextCurrent(window);
-  glfwSwapInterval(1); // Enable vsync
+  glfwSwapInterval(1);
 
-  // Setup Dear ImGui context
+  if (!gladLoaderLoadGL()) {
+    std::cerr << "Failed to initialize GLAD" << std::endl;
+    return 1;
+  }
+
   IMGUI_CHECKVERSION();
   ImGui::CreateContext();
   ImGuiIO &io = ImGui::GetIO();
   (void)io;
-  io.ConfigFlags |=
-      ImGuiConfigFlags_NavEnableKeyboard; // Enable Keyboard Controls
-  io.ConfigFlags |=
-      ImGuiConfigFlags_NavEnableGamepad; // Enable Gamepad Controls
+  io.ConfigFlags |= ImGuiConfigFlags_NavEnableKeyboard;
+  io.ConfigFlags |= ImGuiConfigFlags_NavEnableGamepad;
 
-  // Setup Dear ImGui style
   ImGui::StyleColorsDark();
-  // ImGui::StyleColorsLight();
 
-  // Setup Platform/Renderer backends
   ImGui_ImplGlfw_InitForOpenGL(window, true);
   ImGui_ImplOpenGL3_Init(glsl_version);
-  // Our state
+
   ImVec4 clear_color = ImVec4(0.45f, 0.55f, 0.60f, 1.00f);
 
   keyframes.push_back({0, 0, 0, {}});
   int n_points = 8;
-  bool editslice = true;
+  bool editing = true;
   float lerp_anim_t = 0.0f;
-  bool show_3d_render = false;
+  float yaw = 0.0f, pitch = 0.0f, zoom = 1.5f;
 
   while (!glfwWindowShouldClose(window)) {
     glfwPollEvents();
     if (glfwGetWindowAttrib(window, GLFW_ICONIFIED) != 0) {
-      ImGui_ImplGlfw_Sleep(10); // do not run every frame if minimised
+      ImGui_ImplGlfw_Sleep(10);
       continue;
     }
 
@@ -86,79 +85,113 @@ int main(int, char **) {
     ImGui::NewFrame();
 
     {
+      // main view — full screen
       ImGui::SetNextWindowPos(ImVec2(0.0f, 0.0f));
       ImGui::SetNextWindowSize(ImGui::GetIO().DisplaySize);
       ImGui::PushStyleVar(ImGuiStyleVar_WindowRounding, 0.0f);
       ImGui::Begin("canvas", nullptr,
                    ImGuiWindowFlags_NoDecoration | ImGuiWindowFlags_NoResize |
                        ImGuiWindowFlags_NoBringToFrontOnFocus);
-      if (editslice) {
+      if (editing) {
         RenderCanvas();
       } else {
-        RenderCanvasLerp(lerp_anim_t);
+        // orbit camera — drag to rotate, scroll to zoom
+        if (ImGui::IsWindowHovered() && ImGui::IsMouseDragging(ImGuiMouseButton_Left)) {
+          yaw += io.MouseDelta.x * 0.005f;
+          pitch += io.MouseDelta.y * 0.005f;
+          pitch = glm::clamp(pitch, -1.5f, 1.5f);
+        }
+        if (ImGui::IsWindowHovered() && io.MouseWheel != 0.0f) {
+          zoom *= (1.0f - io.MouseWheel * 0.1f);
+          zoom = glm::clamp(zoom, 0.5f, 10.0f);
+        }
+        Render3D(yaw, pitch, zoom);
       }
       ImGui::End();
       ImGui::PopStyleVar(1);
     }
 
-    if (show_3d_render && !editslice) {
-      ImGui::Begin("3d render");
-      Render3D(0.0, 0.0, 0.0);
-      ImGui::End();
-    }
-
     {
-      static float f = 0.0f;
-      static int counter = 0;
+      ImGui::Begin("controls");
 
-      ImGui::Begin("controls"); // Create a window called "Hello, world!"
-                                // and append into it.
       ImGui::Text("Application average %.3f ms/frame (%.1f FPS)",
                   1000.0f / io.Framerate, io.Framerate);
-      if (ImGui::Checkbox("Edit settings", &editslice)) {
-        if (!editslice) {
-          uint64_t total_no_vertices = 0;
-          for (auto frame : keyframes) {
-            total_no_vertices += frame.points.size();
-          }
-          long double n_p = (long double)(total_no_vertices) / keyframes.size();
-          // n_points = std::min(n_points, 3000);
-          std::cout << "resampling to : " << n_p << " points" << std::endl;
-          for (int i = 0; i < keyframes.size(); i++) {
+
+      if (ImGui::Checkbox("Edit Mode", &editing)) {
+        if (!editing) {
+          // entering view mode — resample all to uniform point count
+          uint64_t total = 0;
+          for (auto &kf : keyframes)
+            total += kf.points.size();
+          long double n_p = (long double)total / keyframes.size();
+          std::cout << "resampling to " << n_p << " points" << std::endl;
+          for (int i = 0; i < keyframes.size(); i++)
             resample(i, n_p);
-          }
+          buildMesh();
         }
       }
-      if (editslice) {
+
+      if (editing) {
         if (ImGui::Button("Save Frame")) {
           std::rotate(keyframes[0].points.begin(),
-                      keyframes[0].points.begin() + keyframes[0].index_of_max_y,
+                      keyframes[0].points.begin() +
+                          keyframes[0].index_of_max_y,
                       keyframes[0].points.end());
           keyframes[0].index_of_max_y = 0;
-          keyframes.insert(keyframes.begin(), {0, 0, 0, {}});
+          float newZ = keyframes[0].z - 0.5f;
+          keyframes.insert(keyframes.begin(), {0, 0, 0, {}, newZ});
+          markMeshDirty();
         }
         ImGui::SliderInt("n_points", &n_points, 4, 16);
-        ImGui::Text("%lu", (long unsigned int)1 << n_points);
+        ImGui::Text("resample count: %lu", (long unsigned int)1 << n_points);
         if (ImGui::Button("Resample")) {
           std::rotate(keyframes[0].points.begin(),
-                      keyframes[0].points.begin() + keyframes[0].index_of_max_y,
+                      keyframes[0].points.begin() +
+                          keyframes[0].index_of_max_y,
                       keyframes[0].points.end());
           keyframes[0].index_of_max_y = 0;
           resample(0, 1 << n_points);
         }
       } else {
-        ImGui::SliderFloat("t", &lerp_anim_t, 0.0, 0.999);
-        // std::cout << lerp_anim_t << std::endl;
-        if (ImGui::Checkbox("Show Render", &show_3d_render)) {
-          if (show_3d_render) {
-            initOpengl();
+        // view-mode controls
+        ImGui::SeparatorText("3D View");
+        ImGui::SliderFloat("Rot Y", &yaw, -3.1416f, 3.1416f);
+        ImGui::SliderFloat("Rot X", &pitch, -1.5f, 1.5f);
+        ImGui::SliderFloat("Zoom", &zoom, 0.5f, 10.0f);
+
+        ImGui::SeparatorText("Cross-section Z positions");
+        for (int i = 0; i < (int)keyframes.size(); i++) {
+          ImGui::PushID(i);
+          std::string label = "Z[" + std::to_string(i) + "]";
+          if (ImGui::InputFloat(label.c_str(), &keyframes[i].z, 0.1f, 0.5f, "%.3f")) {
+            markMeshDirty();
           }
-        };
+          ImGui::PopID();
+        }
+
+        ImGui::SeparatorText("Export");
+        if (ImGui::Button("Export OBJ")) {
+          IGFD::FileDialogConfig cfg;
+          cfg.path = ".";
+          cfg.countSelectionMax = 1;
+          cfg.flags = ImGuiFileDialogFlags_ConfirmOverwrite;
+          ImGuiFileDialog::Instance()->OpenDialog(
+              "ExportOBJ", "Save OBJ File", ".obj", cfg);
+        }
       }
+
       ImGui::End();
     }
 
-    // Rendering
+    // file dialog handling
+    if (ImGuiFileDialog::Instance()->Display("ExportOBJ")) {
+      if (ImGuiFileDialog::Instance()->IsOk()) {
+        std::string path = ImGuiFileDialog::Instance()->GetFilePathName();
+        ExportOBJ(path.c_str());
+      }
+      ImGuiFileDialog::Instance()->Close();
+    }
+
     ImGui::Render();
     int display_w, display_h;
     glfwGetFramebufferSize(window, &display_w, &display_h);
@@ -174,10 +207,6 @@ int main(int, char **) {
       break;
   }
 
-  // std::cout << keyframes.size() << std::endl;
-  // std::cout << points[0] << " - " << points[points.size() - 1] << std::endl;
-
-  // Cleanup
   ImGui_ImplOpenGL3_Shutdown();
   ImGui_ImplGlfw_Shutdown();
   ImGui::DestroyContext();
